@@ -94,7 +94,7 @@ from gslib.wildcard_iterator import CreateWildcardIterator
 
 
 _SYNOPSIS = """
-  gsutil rsync [-a] [-c] [-C] [-d] [-e] [-n] [-p] [-r] [-U] [-x] src_url dst_url
+  gsutil rsync [-a] [-c] [-C] [-d] [-e] [-n] [-p] [-r] [-U] [-x] [-f] src_url dst_url
 """
 
 _DETAILED_HELP_TEXT = ("""
@@ -1171,6 +1171,12 @@ def _RsyncFunc(cls, diff_to_apply, thread_state=None):
         except Exception, e:  # pylint: disable=broad-except
           cls.logger.info('Could not open %s' % src_url.object_name)
           raise
+      if dst_url.IsCloudUrl():
+          cls.logger.info('Destination url is a cloud url %s', dst_url)
+          directories = dst_url.object_name.split(dst_url.delim)[:-1]
+          for directory in directories:
+              cls.logger.info('Would create directory %s', directory)
+
       cls.logger.info('Would copy %s to %s', src_url, dst_url)
     else:
       try:
@@ -1212,7 +1218,8 @@ def _RsyncFunc(cls, diff_to_apply, thread_state=None):
             cls.logger, src_url, dst_url, gsutil_api, cls,
             _RsyncExceptionHandler, src_obj_metadata=src_obj_metadata,
             headers=cls.headers, is_rsync=True,
-            preserve_posix=cls.preserve_posix_attrs)
+            preserve_posix=cls.preserve_posix_attrs,
+            create_directory_objects=cls.create_directory_objects)
         if copy_result is not None:
           (_, bytes_transferred, _, _) = copy_result
           with cls.stats_lock:
@@ -1277,6 +1284,8 @@ def _RsyncFunc(cls, diff_to_apply, thread_state=None):
                                               preserve_posix=True)
       if dst_url.IsCloudUrl():
         dst_generation = GenerationFromUrlAndString(dst_url, dst_url.generation)
+        if cls.dryrun:
+          cls.logger.info('Would ensure that the underlying directories exist for %s', dst_generation)
         dst_obj_metadata = gsutil_api.GetObjectMetadata(
             dst_url.bucket_name, dst_url.object_name, generation=dst_generation,
             provider=dst_url.scheme, fields=['acl'])
@@ -1324,7 +1333,7 @@ class RsyncCommand(Command):
       usage_synopsis=_SYNOPSIS,
       min_args=2,
       max_args=2,
-      supported_sub_args='a:cCdenpPrRUx:',
+      supported_sub_args='a:cCdenpPrRUx:f',
       file_url_ok=True,
       provider_url_ok=False,
       urls_start_arg=0,
@@ -1455,6 +1464,7 @@ class RsyncCommand(Command):
     self.dryrun = False
     self.exclude_pattern = None
     self.skip_unsupported_objects = False
+    self.create_directory_objects = False
     # self.recursion_requested is initialized in command.py (so it can be
     # checked in parent class for all commands).
     canned_acl = None
@@ -1488,6 +1498,8 @@ class RsyncCommand(Command):
             InitializeUserGroups()
         elif o == '-r' or o == '-R':
           self.recursion_requested = True
+        elif o == '-f':
+          self.create_directory_objects = True
         elif o == '-U':
           self.skip_unsupported_objects = True
         elif o == '-x':

@@ -24,6 +24,7 @@ import datetime
 import errno
 import gzip
 from hashlib import md5
+import io
 import json
 import logging
 import mimetypes
@@ -1701,7 +1702,7 @@ def _UploadFileToObject(src_url, src_obj_filestream, src_obj_size,
                         dst_url, dst_obj_metadata, preconditions, gsutil_api,
                         logger, command_obj, copy_exception_handler,
                         gzip_exts=None, allow_splitting=True,
-                        is_component=False):
+                        is_component=False, create_directory_objects=False):
   """Uploads a local file to an object.
 
   Args:
@@ -1790,6 +1791,18 @@ def _UploadFileToObject(src_url, src_obj_filestream, src_obj_size,
     wrapped_filestream = upload_stream
 
   try:
+    if create_directory_objects:
+      provider = gsutil_api.GetApiSelector(provider=dst_url.scheme)
+      directories = dst_url.object_name.split(dst_url.delim)[:-1]
+
+      for i in range(1, len(directories) + 1):
+        directory = str.join(dst_url.delim, directories[0:i]) + dst_url.delim
+        stream = io.BytesIO(b"")
+        dst_object_metadata = apitools_messages.Object(
+          name=directory,
+          bucket=dst_url.bucket_name)
+        gsutil_api.UploadObject(stream, dst_object_metadata, provider=dst_url.scheme)
+
     if parallel_composite_upload:
       elapsed_time, uploaded_object = _DoParallelCompositeUpload(
           upload_stream, upload_url, dst_url, dst_obj_metadata,
@@ -3088,7 +3101,8 @@ def GetDecryptionKey(src_url, src_obj_metadata):
 def PerformCopy(logger, src_url, dst_url, gsutil_api,
                 command_obj, copy_exception_handler, src_obj_metadata=None,
                 allow_splitting=True, headers=None, manifest=None,
-                gzip_exts=None, is_rsync=False, preserve_posix=False):
+                gzip_exts=None, is_rsync=False, preserve_posix=False,
+                create_directory_objects=False):
   """Performs copy from src_url to dst_url, handling various special cases.
 
   Args:
@@ -3111,6 +3125,8 @@ def PerformCopy(logger, src_url, dst_url, gsutil_api,
                If gzip_exts is GZIP_ALL_FILES, gzip all files.
     is_rsync: Whether or not the caller is the rsync command.
     preserve_posix: Whether or not to preserve posix attributes.
+    create_directory_objects: Create directory objects for emulating a file
+                              system.
 
   Returns:
     (elapsed_time, bytes_transferred, version-specific dst_url) excluding
@@ -3301,7 +3317,8 @@ def PerformCopy(logger, src_url, dst_url, gsutil_api,
           src_url, src_obj_filestream, src_obj_size, dst_url,
           dst_obj_metadata, preconditions, gsutil_api, logger, command_obj,
           copy_exception_handler, gzip_exts=gzip_exts,
-          allow_splitting=allow_splitting)
+          allow_splitting=allow_splitting,
+          create_directory_objects=create_directory_objects)
     else:  # dst_url.IsFileUrl()
       PutToQueueWithTimeout(
           gsutil_api.status_queue,
